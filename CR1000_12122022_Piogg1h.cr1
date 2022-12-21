@@ -1,0 +1,590 @@
+'CR1000 Series Datalogger
+'Programma per una stazione della Seconda Universita' di Napoli
+'aggiornata con ord. 15-669
+'
+'                        						Ecosearch, 2016
+'Ultima modifica: 10/11/2016
+'Programmatore: Luca Berichillo
+
+'****************************************************************
+'Descrizione del programma
+'Questo programma controlla un datalogger CR1000 che legge i seguenti
+'sensori/dispositivi
+'- Periferica TDR100 (sotto compilazione condizionale)
+'- Multiplexer SDMX50 (idem)
+'- Termoigrometro CS215
+'- Pluviometro ARG100
+'- Anemometro WSS2
+'- Piranometro SP110
+'- Barometro SB100
+'- Termistore 107
+'- Trasduttore di pressione 5301 per tensiometri
+'La stazione possiede anche un modem GPRS che viene controllato
+'tramite una libreria esterna
+'
+'****************************************************************
+'
+'Differenze dalla versione 4:
+'Aumentato il warm-up dei tensiometri a 3 secondi
+'
+'Differenze dalla versione 3:
+'Corretta l'istruzione di lettura delle sonde TDR (1008 invece di 1001)
+'Corretto il numero di punti considerato dalle istruzioni TDR
+'(251 + 9 invece di 251 + 10)
+'Aggiunto il numero della sonda alla tabella delle forme d'onda
+'
+'Differenze dalla versione 2:
+'Il numero dei trasduttori 5302 passa a 6
+'Inserite istruzioni per
+'
+'Differenze dalla versione 1:
+'La presenza dei tensiometri e' verificata prima di compilare
+'il programma
+'
+'Cablaggi
+'TDR100 e mux
+'Logger		Cavo		TDR100/mux
+'EG			Calza		EG
+'C1			Marrone		C1
+'C2			Verde		C2
+'C3			Bianco		C3
+'G			Nero		G
+'12V		Rosso		12V
+'
+'CS215
+'Logger	Signif	Colore
+'C5		SDI-12	Verde
+'12V	+V		Rosso
+'G		G		Nero
+'EG		EG		Grigio
+'
+'TS1
+'Logger    Colore    Signif
+'12V       Bianco    +V
+'G         Marrone   G
+'N/C       Verde     Analogico 1 (P)
+'N/C       Giallo    Vref analogico
+'N/C       Grigio    Irrigazione on/off
+'N/C       Rosa      RS485 A
+'N/C       Blu       RS485 B
+'C5        Rosso     Analogico 2 (T) o SDI-12
+'
+'ARG100
+'Logger  Signif     Colore
+'P1      Pioggia    Blu
+'G       G_piog     Gaillo
+'EG      EG         Grigio
+'
+'WSS2
+'Logger  Signif     Colore
+'P2      Vel_P      Verde
+'G       Vel_G      Rosa
+'Vx1     Dir_Ex     Bianco
+'G       Ex_G       Nero
+'1H      Dir_V      Rosso
+'AG      Dir_G      Viola
+
+'SP110
+'Logger     Signif   Colore
+'1L         Segnale  Rosso
+'AG         G_Segn   Nero
+'EG         Schermo  Grigio
+'
+'SB-100
+'Logger  Signif     Colore
+'+5V     +V         Rosso
+'2H      Segnale    Nero
+'AG      0V         Verde
+'
+'107
+'Logger     Colore     Significato
+'Vx1        Blu        Vx
+'2L         Marrone    Segnale
+'AG         N/D        AG
+'EG         Giallo    Schermo
+'NB Un resistore da 1K (fornito con la 107)
+'va tra 2L ed AG
+'
+'5301
+'Logger    Colore    Signif
+'SW12      Rosso     +V
+'G         Nero      0V
+'3H        Bianco    mA+
+'3L        Verde     mA-
+'EG        Grigio    Schermo
+'Resistore da 100 Ohm tra 3H e 3L
+
+'Costanti
+'Const PI = 3.141592654
+Const IntervEsecSec = 60'Intervallo di esecuzione del ciclo veloce (secondi)101
+Const IntervEsecModem = 30'Intervallo di esecuzione del ciclo di controllo del modem (secondi)
+Const IntervTDRMin = 60'Intervallo di esecuzione del ciclo lento (minuti)11
+Const IntervMemMin = 60'Intervallo di memorizzazione dati (minuti)
+'Sonde TDR
+'Presenza/assenza del TDR
+Const TDR_Presente = TRUE
+#If TDR_Presente
+Const IndirBaseTDR = 1000
+Const NumSondeTDR = 8
+Const IndirTDR = IndirBaseTDR + NumSondeTDR
+Const NLettureAvg = 4
+Const VelPropOnda = 0.67
+Const Leggi_WForm = TRUE
+Const NPuntiWForm = 251
+'Le sonde TDR possono non essere uguali. Questa tabella contiene i parametri,
+'diversi per ogni sonda, che poi verranno caricati in un array da usare
+'nelle istruzioni TDR.
+'Note: C = lunghezza cavo (m), F = lunghezza finestra (m),
+'S = lunghezza sonda (m), O = Offset sonda (m),
+'Kp = costante di sonda per il calcolo della conducibilia' (S/m)
+ConstTable
+	Const S1_Cavo = 6'Sonda 1
+	Const S1_Finestra = 2.5
+	Const S1_LSonda = 0.123'in m
+	Const S1_Offset = 0.0095'in m
+	Const S1_WForm = FALSE
+	Const S2_Cavo = 6'Sonda 2
+	Const S2_Finestra = 2.5
+	Const S2_LSonda = 0.1123'in m
+	Const S2_Offset = 0.030'in m	
+	Const S2_WForm = FALSE
+	Const S3_Cavo = 6'Sonda 3
+	Const S3_Finestra = 2.5
+	Const S3_LSonda = 0.111'in m
+	Const S3_Offset = 0.019'in m	
+	Const S3_WForm = FALSE
+	Const S4_Cavo = 6'Sonda 4
+	Const S4_Finestra = 2.5
+	Const S4_LSonda = 0.132'in m
+	Const S4_Offset = 0.03'in m
+	Const S4_WForm = FALSE
+	Const S5_Cavo = 6'Sonda 5
+	Const S5_Finestra = 2.5
+	Const S5_LSonda = 0.118'in m
+	Const S5_Offset = 0.012'in m
+	Const S5_WForm = FALSE
+	Const S6_Cavo = 6'Sonda 6
+	Const S6_Finestra = 2.5
+	Const S6_LSonda = 0.1185'in m
+	Const S6_Offset = 0.014'in m	
+	Const S6_WForm = FALSE
+	Const S7_Cavo = 6'Sonda 7
+	Const S7_Finestra = 2.5
+	Const S7_LSonda = 0.120'in m
+	Const S7_Offset = 0.014'in m
+	Const S7_WForm = FALSE
+	Const S8_Cavo = 5.9'Sonda 8
+	Const S8_Finestra = 2.5
+	Const S8_LSonda = 0.119'in m
+	Const S8_Offset = 0.014'in m	
+	Const S8_WForm = FALSE
+		
+EndConstTable
+'Costanti del polinomio di calibrazione di Topp (v. letteratura)
+'Const TDR_a0=-0.053
+'Const TDR_a1=0.0292
+'Const TDR_a2=-0.00055
+'Const TDR_a3=0.0000043
+Const TDR_a0=0.1249
+Const TDR_a1=0.018
+Const TDR_a2=-1.00E-06
+Const TDR_a3=-3.00E-06
+#EndIf
+'CS215
+Const Indir215 = 0'Indirizzo SDI-12 CS215
+'TS1
+Const TS1_Presente = TRUE
+#If TS1_Presente
+Const IndirTS1 = 1'Indirizzo SDI-12 TS1
+#EndIf
+'ARG100
+Const Pioggia_Molt = 0.197'da impulsi a mm (cumulata)
+'Correzione per l'intensita' da nota tecnica EMltd
+'Intensita' corretta = 5.1367E-04 * y + 1.0038E+00 * y
+'dove y e' l'intensita' non corretta, in mm/h
+Const Pioggia_A2 = 5.1367E-04
+Const Pioggia_A1 = 1.0038
+'WSS2
+'Velocita' del vento: 1 Hz = 1.493 m/s
+Const Molt_VelVento = 1.493
+'Direzione del vento. X = V1/Vx quindi il valore va
+'da 0 (V1=0) a 1 (V1=Vx). Moltiplico per il f.scala
+'fisico (357 gradi)
+Const Molt_DirVento = 357.0
+'SP110
+'I sensori sono tutti linearizzati a 5 W m^-2 per mV
+Const SP110_Molt = 5.0
+'SB-100
+Const SB100_Molt = 0.0218'kPa per mV
+Const SB100_Offset = 11.4'kPa
+'5301
+Const Num_Tens = 6
+#If Num_Tens > 0
+'4-20 mA = 0 - 100 cBar
+'Con resistore 100 Ohm 4-20 mA = 400 - 2000 mV
+'Delta = 1600 mV;
+Const Tens_MOLT = 100.0/1600.0'100 cBar = 1600 mV
+Const Tens_Offset = -Tens_MOLT * 400'Toglie i 400 mV dal calcolo
+Const Tens_Warmup = 3000'mS di warm-up
+#EndIf
+
+'Variabili pubbliche
+Public TPannello, VBatt
+'TDR100
+#If TDR_Presente
+Public TDR_Cavo(NumSondeTDR)
+Public TDR_Finestra(NumSondeTDR)
+Public TDR_Sonda(NumSondeTDR)
+Public TDR_Offset(NumSondeTDR)
+Public TDR_Kp(NumSondeTDR)
+Public LaL(NumSondeTDR)
+Public BEC(NumSondeTDR)
+Public SWC(NumSondeTDR)
+Public LaL2
+Public TDR_AllWF(NumSondeTDR, 9+NPuntiWForm)
+Public TDR_WF(10+NPuntiWForm)
+#EndIf
+'CS215
+Public CS215(2)
+'TS1
+#If TS1_Presente
+Public TensioUMS(5)
+Public Tens_Disab
+#EndIf
+'ARG100
+Public Pioggia, Pioggia_1min, Pioggia_Intens, Pioggia_1h
+'WSS2
+Public Vento_Vel, Vento_Dir
+'SP110
+Public Rad_Solare
+'SB-100
+Public SB100_PAtm
+'107
+Public Temperatura
+'5301
+#If Num_Tens > 0
+Public Pressione_Tens(Num_Tens)
+#EndIf
+
+'stringa per inviare output tramite seriale
+Public OutString As String * 500
+
+'Variabili private
+Dim i,j
+
+'Alias
+Alias TDR_WF(1) = N_Sonda
+Alias TDR_WF(2) = N_Media
+Alias TDR_WF(3) = Vel_Prop
+Alias TDR_WF(4) = N_Punti
+Alias TDR_WF(5) = Lung_Cavo
+Alias TDR_WF(6) = Lung_Finestra
+Alias TDR_WF(7) = Lung_Sonda
+Alias TDR_WF(8) = Offset_Sonda
+Alias TDR_WF(9) = Molt_Forma
+Alias TDR_WF(10) = Offset_Forma
+
+'Alias
+'CS215
+Alias CS215(1) = TAria
+Alias CS215(2) = RHAria
+'TS1
+#If TS1_Presente
+Alias TensioUMS(1) = Tens_SWP
+Alias TensioUMS(2) = Tens_T
+Alias TensioUMS(3) = Tens_Bubble
+Alias TensioUMS(4) = Tens_Stato
+Alias TensioUMS(5) = Tens_Valim
+#EndIf
+'Unita'
+'TDR100
+#If TDR_Presente
+Units LaL = adimensionale
+Units BEC = S/m
+Units SWC = Vol/Vol
+#EndIf
+'CS215
+Units TAria = C
+Units RHAria = %
+'TS1
+#If TS1_Presente
+Units Tens_SWP = hPa
+Units Tens_T = Gradi C
+Units Tens_Bubble = ml
+Units Tens_Stato = 0/1
+Units Tens_Valim = V
+#EndIf
+'ARG100
+Units Pioggia = mm
+Units Pioggia_Intens = mm/h
+'WSS2
+Units Vento_Vel = m/s
+Units Vento_Dir = Gradi
+'SP110
+Units Rad_Solare = W m^-2
+'SB-100
+Units SB100_PAtm = kPa
+'107
+Units Temperatura = Gradi C
+'5301
+#If Num_Tens > 0
+Units Pressione_Tens = cBar
+#EndIf
+
+'Tabelle dati
+DataTable (Diagn,1,-1)
+  DataInterval (0,1440,Min,10)
+  Minimum (1,VBatt,FP2,False,False)
+  Maximum (1,VBatt,FP2,False,False)
+  Minimum (1,TPannello,FP2,False,False)
+  Maximum (1,TPannello,FP2,False,False)
+EndTable
+'
+DataTable (Dati_Meteo,1,-1)
+  DataInterval (0,IntervMemMin,Min,10)
+  Average (2,CS215(1),FP2,False)'CS215
+  Totalize (1,Pioggia,FP2,False)'ARG100
+  Maximum (1,Pioggia_Intens,FP2,False,False)
+  WindVector (1,Vento_Vel,Vento_Dir,FP2,False,0,0,0)'WSS2
+  FieldNames("Vento_Vel_MV:m/s,Vento_Dir_MV:Gradi,Vento_Dir_SD:")
+  Average (1,Rad_Solare,FP2,False)'SP110
+  Average (1,SB100_PAtm,FP2,False)'SB-100
+  Average (1,Temperatura,FP2,False)'107
+EndTable
+
+'Controllo modem GPRS (in file separato)
+Include "CPU:GPRS_Lib.CR1"
+
+'Programma principale
+BeginProg
+  'Inizializzazione
+
+  'Operazioni preliminari
+  'Carica l'array delle costanti per i TDR
+  #If TDR_Presente
+  For i = 1 To NumSondeTDR
+    Read TDR_Cavo(i)
+    Read TDR_Finestra(i)
+    Read TDR_Sonda(i)
+    Read TDR_Offset(i)
+    Read TDR_Kp(i)
+  Next i
+  #EndIf
+  
+  'apertura della porta seriale
+  SerialOpen(ComRS232,9600,0,0,10000)
+
+  Scan (IntervEsecSec,Sec,3,0)
+    PanelTemp (TPannello,250)
+    Battery (VBatt)
+    '***** Istruzioni di misura *****
+    'CS215
+    SDI12Recorder (CS215(),5,Indir215,"M!",1.0,0)
+    'ARG100
+    PulseCount (Pioggia,1,1,2,0,Pioggia_Molt,0.0)
+    'WSS2
+    PulseCount (Vento_Vel,1,2,2,1,Molt_VelVento,0)
+    BrHalf (Vento_Dir,1,mV2500,1,Vx1,1,2500,True,0,250,Molt_DirVento,0)
+    'SP110
+    VoltSe (Rad_Solare,1,mV250,2,1,0,250,SP110_Molt,0)
+    'SB-100
+    VoltSe (SB100_PAtm,1,mV5000,3,1,0,250,SB100_Molt,SB100_Offset)
+    '107
+    Therm107 (Temperatura,1,4,Vx2,0,250,1.0,0)
+
+	Pioggia_1h += Pioggia
+	
+    '***** Calcoli *****
+    'ARG100
+    Pioggia_1min += Pioggia
+    If (IfTime(0,1,min)) Then
+      Pioggia_Intens = Pioggia_1min * 60'da mm a mm/h
+      'Correggi per l'intensita'
+      Pioggia_Intens = Pioggia_A2 * Pioggia_Intens^2 + Pioggia_A1 * Pioggia_Intens
+      Pioggia_1min = 0'Azzera l'accumulatore
+    EndIf
+    '***** Chiamata alle tabelle dati *****
+    CallTable Dati_Meteo
+    CallTable Diagn
+	
+  NextScan
+
+  SlowSequence
+  Scan (IntervEsecModem,Sec,3,0)
+    Call ControllaModem
+  NextScan
+  EndSequence
+
+  SlowSequence
+
+  #If Num_Tens > 0
+  DataTable (Dati_Tensiometri,1,-1)
+    DataInterval (0,IntervMemMin,Min,10)
+    Average (Num_Tens,Pressione_Tens(),FP2,False)'5301
+    #If TS1_Presente
+    Average (5,TensioUMS(),FP2,Tens_Disab)'TS1
+    #EndIf
+  EndTable
+  #EndIf
+
+  #If TDR_Presente
+  DataTable (Dati_TDR,1,-1)
+    DataInterval (0,IntervMemMin,Min,10)
+    Average(NumSondeTDR,LaL(),FP2,False)
+    Average(NumSondeTDR,SWC(),FP2,False)
+    Average(NumSondeTDR,BEC(),FP2,False)
+  EndTable
+
+  DataTable (TDR_WForms, 1, 1000)
+    Sample (1,i,UINT2)
+    FieldNames("Canale")
+    Sample (10+NPuntiWForm,TDR_WF(),FP2)
+  EndTable
+  #EndIf
+	
+  Scan (IntervTDRMin,Min,3,0)
+    '***** Istruzioni di misura *****
+    TDR100 (LaL(1),0,0,1001,4,VelPropOnda,NPuntiWForm,S1_Cavo,S1_Finestra,S1_LSonda,S1_Offset,1.0,0)
+	If NumSondeTDR > 0 Then
+		'	******** porta seriale: tensiometri *********
+		TDR100 (LaL(1),0,0,1001,4,VelPropOnda,NPuntiWForm,S1_Cavo,S1_Finestra,S1_LSonda,S1_Offset,1.0,0)
+		If (S1_WForm = TRUE) Then
+			N_Sonda = 1	
+                        TDR100 (TDR_WF(2),0,1,1001,4,VelPropOnda,NPuntiWForm,S1_Cavo,S1_Finestra,S1_LSonda,S1_Offset,1.0,0)
+                        CallTable TDR_WForms		
+		EndIf
+	EndIf
+	If NumSondeTDR > 1 Then
+		TDR100 (LaL(2),0,0,2001,4,VelPropOnda,NPuntiWForm,S2_Cavo,S2_Finestra,S2_LSonda,S2_Offset,1.0,0)
+		If (S2_WForm = TRUE) Then
+			N_Sonda = 2
+                        TDR100 (TDR_WF(2),0,1,2001,4,VelPropOnda,NPuntiWForm,S2_Cavo,S2_Finestra,S2_LSonda,S2_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 2 Then
+		TDR100 (LaL(3),0,0,3001,4,VelPropOnda,NPuntiWForm,S3_Cavo,S3_Finestra,S3_LSonda,S3_Offset,1.0,0)
+		If (S3_WForm = TRUE) Then
+			N_Sonda = 3
+                        TDR100 (TDR_WF(2),0,1,3001,4,VelPropOnda,NPuntiWForm,S3_Cavo,S3_Finestra,S3_LSonda,S3_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 3 Then
+		TDR100 (LaL(4),0,0,4001,4,VelPropOnda,NPuntiWForm,S4_Cavo,S4_Finestra,S4_LSonda,S4_Offset,1.0,0)
+		If (S4_WForm = TRUE) Then
+			N_Sonda = 4
+                        TDR100 (TDR_WF(2),0,1,4001,4,VelPropOnda,NPuntiWForm,S4_Cavo,S4_Finestra,S4_LSonda,S4_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 4 Then
+		TDR100 (LaL(5),0,0,5001,4,VelPropOnda,NPuntiWForm,S5_Cavo,S5_Finestra,S5_LSonda,S5_Offset,1.0,0)
+		If (S5_WForm = TRUE) Then
+			N_Sonda = 5
+                        TDR100 (TDR_WF(2),0,1,5001,4,VelPropOnda,NPuntiWForm,S5_Cavo,S5_Finestra,S5_LSonda,S5_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 5 Then
+		TDR100 (LaL(6),0,0,6001,4,VelPropOnda,NPuntiWForm,S6_Cavo,S6_Finestra,S6_LSonda,S6_Offset,1.0,0)
+		If (S6_WForm = TRUE) Then
+			N_Sonda = 6
+                       TDR100 (TDR_WF(2),0,1,6001,4,VelPropOnda,NPuntiWForm,S6_Cavo,S6_Finestra,S6_LSonda,S6_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 6 Then
+		TDR100 (LaL(7),0,0,7001,4,VelPropOnda,NPuntiWForm,S7_Cavo,S7_Finestra,S7_LSonda,S7_Offset,1.0,0)
+		If (S7_WForm = TRUE) Then
+			N_Sonda = 7
+                       TDR100 (TDR_WF(2),0,1,7001,4,VelPropOnda,NPuntiWForm,S7_Cavo,S7_Finestra,S7_LSonda,S7_Offset,1.0,0)
+                        CallTable TDR_WForms
+		EndIf
+	EndIf
+	If NumSondeTDR > 7 Then
+		TDR100 (LaL(8),0,0,8001,4,VelPropOnda,NPuntiWForm,S8_Cavo,S8_Finestra,S8_LSonda,S8_Offset,1.0,0)
+		If (S8_WForm = TRUE) Then
+			N_Sonda = 8
+                        TDR100 (TDR_WF(2),0,1,8001,4,VelPropOnda,NPuntiWForm,S8_Cavo,S8_Finestra,S8_LSonda,S8_Offset,1.0,0)
+                       CallTable TDR_WForms
+		EndIf
+	EndIf
+    
+    'TS1
+    #If TS1_Presente
+    SDI12Recorder (TensioUMS(),5,IndirTS1,"M!",1.0,0)
+    #EndIf
+
+    '***** Calcoli *****
+    'TDR100
+    #If TDR_Presente
+    For i=1 To NumSondeTDR
+      LaL2 = LaL(i)^2
+      SWC(i) = TDR_a0 + TDR_a1*LaL2 + TDR_a2*LaL2^2 + TDR_a3*LaL2^3
+    Next i
+    #EndIf
+    #If TS1_Presente
+    Tens_Disab = (TensioUMS(1) = NAN) OR (TensioUMS(1) < -990)
+    #EndIf
+
+	
+	'Send printable ASCII string out RS-232 port
+	'OutString=OutString & FormatFloat(Pressione_Tens(1),"%02.3f") & ";" & CHR(13) & CHR(10) & ""
+	'OutString=OutString & CHR(13) & CHR(10) & ""
+	'SerialOut(ComRS232,OutString,"",0,220)
+	
+	'5301
+    #If Num_Tens > 0
+    SW12 (1)'Accendi i trasduttori
+    Delay (0,Tens_Warmup,mSec)
+    VoltDiff(Pressione_Tens(),Num_Tens,mV2500,3,True,0,250,Tens_MOLT,Tens_Offset)	
+		
+
+	Delay(0,7,min)
+	
+	'********* porta seriale *********
+	OutString="meteo;"  'NUOVACOSA
+	OutString=OutString & FormatFloat(VBatt,"%02.3f") & ";"
+	OutString=OutString & FormatFloat(Pioggia_1h,"%02.3f") & ";"
+	OutString=OutString & FormatFloat(Temperatura,"%02.3f") & ";"
+	Pioggia_1h = 0
+	
+	OutString=OutString & "tdr;"
+	For i=1 To NumSondeTDR
+      OutString=OutString & FormatFloat(SWC(i),"%02.3f") & ";"
+    Next i
+	
+	OutString=OutString & "tens;"
+	For i=1 To Num_Tens
+	  OutString=OutString & FormatFloat(Pressione_Tens(i),"%02.3f") & ";"
+	Next i
+	
+	'Send printable ASCII string out RS-232 port
+	OutString=OutString & CHR(13) & CHR(10) & ""
+	'Delay(0,5,min)
+	SerialOut(ComRS232,OutString,"",0,220)
+	Delay(0,3,min)   'prima c'era (0,2,min)
+	SW12(0)'Spegni i trasduttori
+    #EndIf
+	
+	'***** Chiamata alle tabelle dati *****
+    #If Num_Tens > 0
+    CallTable Dati_Tensiometri
+    #EndIf
+'    #If TDR_Presente
+    CallTable Dati_TDR
+'    For i=1 To NumSondeTDR
+'      For j = 1 To 9+NPuntiWForm
+'        TDR_WF(j) = TDR_AllWF(i,j)
+'      Next j
+'      CallTable TDR_WForms
+'    Next i
+'    #EndIf
+	
+  NextScan
+  EndSequence
+EndProg
+
+
+
